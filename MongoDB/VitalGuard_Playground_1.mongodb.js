@@ -1,95 +1,127 @@
-/* global use, db */
-// MongoDB Playground
-// To disable this template go to Settings | MongoDB | Use Default Template For Playground.
-// Make sure you are connected to enable completions and to be able to run a playground.
-// Use Ctrl+Space inside a snippet or a string literal to trigger completions.
-// The result of the last command run in a playground is shown on the results panel.
-// By default the first 20 documents will be returned with a cursor.
-// Use 'console.log()' to print to the debug output.
-// For more documentation on playgrounds please refer to
-// https://www.mongodb.com/docs/mongodb-vscode/playgrounds/
+const { MongoClient } = require("mongodb");
+const mqtt = require("mqtt");
+const uuid = require("uuid");
 
-// Select the database to use.
-use("VitalGuard");
+const mongoClient = new MongoClient(
+  "mongodb+srv://igorvieira:vitalguard@cluster0.w3yfk85.mongodb.net/"
+);
+const client = mqtt.connect("mqtt://192.168.0.108");
 
-// Insert a few documents into the sales collection.
-db.getCollection("sales").insertMany([
-  {
-    item: "abc",
-    price: 10,
-    quantity: 2,
-    date: new Date("2014-03-01T08:00:00Z"),
-  },
-  {
-    item: "jkl",
-    price: 20,
-    quantity: 1,
-    date: new Date("2014-03-01T09:00:00Z"),
-  },
-  {
-    item: "xyz",
-    price: 5,
-    quantity: 10,
-    date: new Date("2014-03-15T09:00:00Z"),
-  },
-  {
-    item: "xyz",
-    price: 5,
-    quantity: 20,
-    date: new Date("2014-04-04T11:21:39.736Z"),
-  },
-  {
-    item: "abc",
-    price: 10,
-    quantity: 10,
-    date: new Date("2014-04-04T21:23:13.331Z"),
-  },
-  {
-    item: "def",
-    price: 7.5,
-    quantity: 5,
-    date: new Date("2015-06-04T05:08:13Z"),
-  },
-  {
-    item: "def",
-    price: 7.5,
-    quantity: 10,
-    date: new Date("2015-09-10T08:43:00Z"),
-  },
-  {
-    item: "abc",
-    price: 10,
-    quantity: 5,
-    date: new Date("2016-02-06T20:20:13Z"),
-  },
-]);
+class MongoCall {
+  constructor(payload_data) {
+    this.payload = payload_data;
+  }
 
-// Run a find command to view items sold on April 4th, 2014.
-const salesOnApril4th = db
-  .getCollection("sales")
-  .find({
-    date: { $gte: new Date("2014-04-04"), $lt: new Date("2014-04-05") },
-  })
-  .count();
+  async login() {
+    const mydb = mongoClient.db("Users");
+    const mycol = mydb.collection("infos");
 
-// Print a message to the output window.
-console.log(`${salesOnApril4th} sales occurred in 2014.`);
+    try {
+      const { email, senha } = this.payload;
+      const loginCheck = await mycol.findOne(
+        { email, senha },
+        { projection: { id_paho_mqtt: 1 } }
+      );
+      if (loginCheck) {
+        const id_paho_mqtt = loginCheck.id_paho_mqtt.toString();
+        client.publish(
+          `VitalGuard/${id_paho_mqtt}/login/status`,
+          JSON.stringify({ aprovado: true, id_paho_mqtt })
+        );
+      } else {
+        console.log("Usuário não encontrado");
+        client.publish(
+          "VitalGuard/**id_da_sessão_app**/login/status",
+          JSON.stringify({ aprovado: false })
+        );
+      }
+    } catch (error) {
+      console.error("Login error:", error);
+    }
+  }
 
-// Here we run an aggregation and open a cursor to the results.
-// Use '.toArray()' to exhaust the cursor to return the whole result set.
-// You can use '.hasNext()/.next()' to iterate through the cursor page by page.
-db.getCollection("sales").aggregate([
-  // Find all of the sales that occurred in 2014.
-  {
-    $match: {
-      date: { $gte: new Date("2014-01-01"), $lt: new Date("2015-01-01") },
-    },
-  },
-  // Group the total sales for each product.
-  {
-    $group: {
-      _id: "$item",
-      totalSaleAmount: { $sum: { $multiply: ["$price", "$quantity"] } },
-    },
-  },
-]);
+  async cadastro() {
+    const mydb = mongoClient.db("Users");
+    const mycol = mydb.collection("infos");
+
+    try {
+      const { nome, senha, cpf, email } = this.payload;
+      const cpf_check = await mycol.findOne({ cpf });
+      const email_check = await mycol.findOne({ email });
+      if (cpf_check || email_check) {
+        console.log("CPF ou email já cadastrado!");
+        client.publish(
+          "VitalGuard/**id_sessão**/cadastro/cadastroFalhou",
+          "cpf&emailDuplicado"
+        );
+        return;
+      }
+      const client_id = uuid.v4();
+      const myobj = { nome, email, senha, cpf, id_paho_mqtt: client_id };
+      await mycol.insertOne(myobj);
+      console.log("Documento inserido!");
+    } catch (error) {
+      console.error("Cadastro error:", error);
+    }
+  }
+
+  cadastroPaciente() {
+    // To be implemented
+  }
+
+  async update() {
+    const mydb = mongoClient.db("Paciente");
+    const mycol = mydb.collection("infos");
+
+    try {
+      const { cpf, BPM } = this.payload;
+      const update_query = {
+        $push: {
+          "ocorrenciasAmbulancia.0.streamAmbulancia.BPM": BPM,
+          "ocorrenciasAmbulancia.0.streamAmbulancia.data": new Date(),
+        },
+      };
+      await mycol.updateOne({ cpf }, update_query);
+      console.log("Documento atualizado!");
+    } catch (error) {
+      console.error("Update error:", error);
+    }
+  }
+}
+
+const on_connect = () => {
+  console.log("Conectado");
+  client.subscribe("VitalGuard/#");
+};
+
+const on_message = (topic, message) => {
+  try {
+    const payload_str = message.toString();
+    if (payload_str) {
+      const payload_data = JSON.parse(payload_str);
+      const mongoDB = new MongoCall(payload_data);
+      if (topic === "VitalGuard/cadastro/dados") {
+        mongoDB.cadastro();
+      } else if (topic === "VitalGuard/sensor/dados") {
+        mongoDB.update();
+      } else if (topic === "VitalGuard/login") {
+        mongoDB.login();
+      }
+    } else {
+      console.log("Payload vazio.");
+    }
+  } catch (error) {
+    console.error("on_message error:", error);
+  }
+};
+
+client.on("connect", on_connect);
+client.on("message", on_message);
+
+try {
+  client.options.username = "Igor";
+  client.options.password = "abc";
+  client.reconnect();
+} catch (error) {
+  console.error("MQTT connection error:", error);
+}
