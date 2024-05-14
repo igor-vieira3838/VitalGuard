@@ -1,11 +1,12 @@
 const { MongoClient } = require("mongodb");
-const mqtt = require("mqtt");
-const uuid = require("uuid");
+const { connect } = require("mqtt");
+const { v4 } = require("uuid");
 
 const mongoClient = new MongoClient(
   "mongodb+srv://igorvieira:vitalguard@cluster0.w3yfk85.mongodb.net/"
 );
-const client = mqtt.connect("mqtt://192.168.0.108");
+
+const client = connect("mqtt://192.168.0.108");
 
 class MongoCall {
   constructor(payload_data) {
@@ -56,7 +57,7 @@ class MongoCall {
         );
         return;
       }
-      const client_id = uuid.v4();
+      const client_id = v4();
       const myobj = { nome, email, senha, cpf, id_paho_mqtt: client_id };
       await mycol.insertOne(myobj);
       console.log("Documento inserido!");

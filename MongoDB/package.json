@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "mongodb": "^6.6.1",
+    "mqtt": "^5.5.5",
+    "uuid": "^9.0.1",
+    "type": "module"
+  }
+}
